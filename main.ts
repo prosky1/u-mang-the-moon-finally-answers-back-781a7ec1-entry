@@ -1,55 +1,69 @@
-// The Moon Finally Answers Back.
+// The Moon Finally Answers Back — entrypoint.
 //
-// Writes the Moon's one-line comeback to /output/entry.txt.
-//
-// The bounty asks for a single line of 1 to 240 characters, in the voice
-// of the Moon answering everyone who has ever stared up at it, wished on
-// it, howled at it, or made it a late-night promise. The program checks
-// the line against the sealed gate (1 to 240 characters, not only white
-// space, one line of UTF-8 text) before writing, then reads the file back
-// to confirm the exact bytes on disk match the line it meant to submit.
+// The Moon answers everyone who has ever stared up at it, wished on it,
+// howled at it, or made it a late-night promise. This program writes that
+// one-line answer to /output/entry.txt, after running the sealed gate
+// checks from RULES.txt: 1 to 240 characters of UTF-8 text, exactly one
+// line, no leading or trailing whitespace.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-const TEXT =
+const MOON_ANSWER =
   "I control your oceans, your months, and your werewolves. You control the remote. Fair trade.";
 
-const MIN_CHARS = 1;
-const MAX_CHARS = 240;
-const OUT_PATH = "/output/entry.txt";
+const GATE = {
+  minChars: 1,
+  maxChars: 240,
+  destination: "/output/entry.txt",
+} as const;
 
-function validate(text: string): void {
-  if (text.trim().length === 0) {
-    throw new Error("entry text must not be blank");
-  }
-  if (text.length < MIN_CHARS || text.length > MAX_CHARS) {
-    throw new Error(
-      `entry text is ${text.length} characters, must be 1 to ${MAX_CHARS}`,
+const ASCII_ONLY = /^[\x00-\x7F]*$/;
+const LINE_BREAK = /[\r\n]/;
+const CONTROL_CHAR = /[\x00-\x1F\x7F]/;
+
+// Collect every gate violation first, then fail once with the full list,
+// so a bad line reports all of its problems instead of just the first.
+function collectProblems(line: string): string[] {
+  const problems: string[] = [];
+
+  if (line.length < GATE.minChars || line.length > GATE.maxChars) {
+    problems.push(
+      `length ${line.length} is outside the ${GATE.minChars}-${GATE.maxChars} character window`,
     );
   }
-  if (text.includes("\n") || text.includes("\r")) {
-    throw new Error("entry text must be a single line");
+  if (line.trim().length === 0) {
+    problems.push("line is blank");
   }
-  if (text !== text.trim()) {
-    throw new Error("entry text must not start or end with whitespace");
+  if (LINE_BREAK.test(line)) {
+    problems.push("line contains a line break");
   }
-  // The gate counts characters, but the file must also be exact bytes:
-  // a multi-byte character would make byte length differ from char length.
-  if (Buffer.byteLength(text, "utf-8") !== text.length) {
-    throw new Error("entry text must be plain ASCII, one byte per character");
+  if (line !== line.trim()) {
+    problems.push("line starts or ends with whitespace");
   }
+  if (CONTROL_CHAR.test(line)) {
+    problems.push("line contains a control character");
+  }
+  if (!ASCII_ONLY.test(line)) {
+    problems.push("line contains non-ASCII characters");
+  }
+  return problems;
 }
 
-function main(): void {
-  validate(TEXT);
-  mkdirSync(dirname(OUT_PATH), { recursive: true });
-  writeFileSync(OUT_PATH, TEXT, "utf-8");
-  const written = readFileSync(OUT_PATH, "utf-8");
-  if (written !== TEXT) {
-    throw new Error("verification failed: file content differs from entry text");
+function run(): void {
+  const problems = collectProblems(MOON_ANSWER);
+  if (problems.length > 0) {
+    throw new Error(`entry rejected by the gate: ${problems.join("; ")}`);
   }
-  console.log(`wrote ${TEXT.length} characters to ${OUT_PATH}`);
+
+  mkdirSync(dirname(GATE.destination), { recursive: true });
+  writeFileSync(GATE.destination, MOON_ANSWER, "utf-8");
+
+  const onDisk = readFileSync(GATE.destination, "utf-8");
+  if (onDisk !== MOON_ANSWER) {
+    throw new Error("round-trip check failed: file content differs from the entry");
+  }
+  console.log(`wrote ${MOON_ANSWER.length} characters to ${GATE.destination}`);
 }
 
-main();
+run();
